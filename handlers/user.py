@@ -74,7 +74,7 @@ button_20 = KeyboardButton(text=LEXICON['/quantity_pm'])
 
 
 # Создаем объект клавиатуры, добавляя в него кнопки
-keyboard_button = ReplyKeyboardMarkup(keyboard=[[button_1, button_2], [button_3, button_17]], resize_keyboard=True)
+keyboard_button = ReplyKeyboardMarkup(keyboard=[[button_1 ,button_3, button_17]], resize_keyboard=True)
 keyboard_button_setting = ReplyKeyboardMarkup(keyboard=[[button_4, button_5, button_18], [button_6, button_14, button_8]],
                                               resize_keyboard=True)
 keyboard_button_chanel = ReplyKeyboardMarkup(keyboard=[[button_8]], resize_keyboard=True)
