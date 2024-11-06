@@ -6,7 +6,7 @@ import requests
 from typing import Dict, List, Any
 from config_data.config import Config, load_config
 import datetime
-from database.database import premium_setting
+from database.requests import prem
 
 logger_pay = logging.getLogger(__name__)
 handler_pay = logging.FileHandler(f"{__name__}.log")
@@ -134,12 +134,13 @@ async def list_order():
     order_list = []
     try:
         result = crypto.list_invoices(dt_end, dt_end, limit=100)
+
         if result:
             for i in result['result']:
                 if i not in order_list and i not in order_list_paid:
                     order_list.append(i)
                 if i['status'] == 'paid' and i not in order_list_paid:
-                    await premium_setting(i['order_id'], 30)
+                    await prem(i['order_id'], 30)
                     order_list_paid.append(i)
                     datetime_obj = datetime.datetime.strptime(i['created'], '%Y-%m-%d %H:%M:%S.%f')
                     datetime_obj = pytz.utc.localize(datetime_obj)

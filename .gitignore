@@ -166,3 +166,4 @@ cython_debug/
 !/users.sql
 /database/database.db
 /tests/test.py
+/tests/

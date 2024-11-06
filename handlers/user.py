@@ -2,13 +2,13 @@ from aiogram import F, Router, Bot
 import logging
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.types import Message, KeyboardButton, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import default_state, State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from lexicon.lexicon import LEXICON, LEXICON_TEXT
-import database as db
+import database.requests as db
 import humanize
 from config_data.config import Config, load_config
 from cloud_pay.paymant import CryptoCloudSDK
@@ -79,36 +79,53 @@ keyboard_button_quantity = ReplyKeyboardMarkup(keyboard=[[button_9, button_10], 
 
 
 async def setting_status(tg_id):
-    setting_user = await db.db_setting_selection(tg_id)
+    setting_user = await db.setting_select(tg_id)
     hours_text = {3: 'часа', 30: 'часа', 360: 'часов', 720: 'часов', 1440: 'часа'}
-    quantity_text = '<b>🧿Количество сигналов не ограничено🧿</b>'
+    quantity_text = '🧿Количество <b>ПАМП</b> и <b>ДАМП</b> сигналов не ограничено🧿'
+    quantity_text_min = '🧿Количество <b>ЛОНГ</b> сигналов не ограничено🧿'
     quantity_text_limit = (
-        '🧿<b>Количество сигналов за {quantity_interval} '
-        '{hours_text}: {quantity_setting}</b>🧿'
-    ).format(quantity_interval=int(setting_user['interval_signal_pd']/60),
-             hours_text=hours_text[setting_user['interval_signal_pd']],
-             changes_long_min=setting_user['quatity_pump_min'],
-             intarval_long_min=setting_user['intarval_pump_min'],
-             quantity_setting=setting_user['quatity_signal_pd'])
-    if setting_user['interval_signal_pd'] == 30:
-        return LEXICON_TEXT['setting_text'].format(
-            changes_long=setting_user['quantity_pump'], interval_long=setting_user['interval_pump'],
-            changes_short=setting_user['quantity_short'], interval_short=setting_user['intarval_short'],
-            changes_long_min=setting_user['quatity_pump_min'],
-            intarval_long_min=setting_user['intarval_pump_min'],
-            quantity_text=quantity_text)
+        '🧿Количество <b>ПАМП</b> и <b>ДАМП</b> сигналов за {quantity_interval} '
+        '{hours_text}: {quantity_setting}🧿'
+    ).format(quantity_interval=int(setting_user['quantity_interval']/60),
+             hours_text=hours_text[setting_user['quantity_interval']],
+             quantity_setting=setting_user['quantity']
+             )
+    quantity_text_limit_min = (
+        '🧿Количество сигналов <b>ЛОНГ</b> за {quantity_interval} '
+        '{hours_text}: {quantity_setting}🧿'
+    ).format(quantity_interval=int(setting_user['quantity_min_interval']/60),
+             hours_text=hours_text[setting_user['quantity_min_interval']],
+             quantity_setting=setting_user['quantity_min']
+             )
+    if setting_user['quantity_interval'] not in (360, 720, 1440):
+        quantity_text_min = quantity_text_min
     else:
-        return LEXICON_TEXT['setting_text'].format(
-            changes_long=setting_user['quantity_pump'], interval_long=setting_user['interval_pump'],
-            changes_short=setting_user['quantity_short'], interval_short=setting_user['intarval_short'],
-            changes_long_min=setting_user['quatity_pump_min'],
-            intarval_long_min=setting_user['intarval_pump_min'],
-            quantity_text=quantity_text_limit)
+        quantity_text_min = quantity_text_limit_min
+    if setting_user['quantity'] not in (360, 720, 1440):
+        quantity_text = quantity_text
+    else:
+        quantity_text = quantity_text_min
+    return LEXICON_TEXT['setting_text'].format(
+        changes_long=setting_user['pump'], interval_long=setting_user['pump_interval'],
+        changes_short=setting_user['dump'], interval_short=setting_user['dump_interval'],
+        changes_long_min=setting_user['pump_min'],
+        intarval_long_min=setting_user['pump_min_interval'],
+        quantity_text=quantity_text,
+        quantity_text_min=quantity_text_min)
+
+
+async def not_prem(message: Message):
+    result = await db.setting_select(message.from_user.id)
+    if result:
+        return True
+    else:
+        await message.answer(text=LEXICON_TEXT['not_prem'])
+        await process_prem(message)
+        return False
 
 
 @router.message(CommandStart())  # Этот хэндлер срабатывает на команду /start
 async def process_start_command(message: Message, state: FSMContext):
-    await db.db_create_user(message.from_user.id, message.from_user.username)
     await message.answer(text=LEXICON['/start'],
                          reply_markup=keyboard_button)
     await state.clear()
@@ -118,9 +135,9 @@ async def process_start_command(message: Message, state: FSMContext):
 @router.message(Command(commands='pay'))
 @router.message(F.text == LEXICON['/prem'], StateFilter(default_state))
 async def process_prem(message: Message):
-    prm_date = await db.premium_user(message.from_user.id)
+    prm_date = await db.setting_select(message.from_user.id)
     if prm_date:
-        await message.answer(text=LEXICON_TEXT['premium_pay'].format(prm_date=prm_date))
+        await message.answer(text=LEXICON_TEXT['premium_pay'].format(prm_date=prm_date['created_at']))
     else:
         data = {
             "amount": 10, "shop_id": 'yUwIRDANiwodkJ1f', "currency": 'USD', "order_id": message.from_user.id,
@@ -132,9 +149,11 @@ async def process_prem(message: Message):
         }
         ordder = create_invoice.create_invoice(data)
         t = ordder['result']['link']
+        chanel = 'https://t.me/pump_dump_oi'
         button_inlaite_1 = InlineKeyboardButton(text=LEXICON['pay'], url=t)
         button_inlaite_2 = InlineKeyboardButton(text=LEXICON['free_play'], callback_data=LEXICON['free_play'])
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[[button_inlaite_1], [button_inlaite_2]])
+        button_inlaite_3 = InlineKeyboardButton(text=LEXICON['chanel'], url=chanel)
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[[button_inlaite_1], [button_inlaite_2], [button_inlaite_3]])
         await message.answer(
             text=LEXICON_TEXT['pay_30'],
             reply_markup=keyboard
@@ -143,8 +162,8 @@ async def process_prem(message: Message):
 
 @router.callback_query(F.data == LEXICON['free_play'], StateFilter(default_state))
 async def process_free_play(callback: CallbackQuery):
-    free_prem = await db.free_premium_user(callback.from_user.id)
-    if free_prem:
+    free_prem = await db.free_prem(callback.from_user.id)
+    if not free_prem:
         await callback.message.answer(text=LEXICON_TEXT['free_play'])
     else:
         await callback.message.answer(text=LEXICON_TEXT['free_play_on'])
@@ -168,20 +187,19 @@ async def process_help_command(message: Message, state: FSMContext):
 
 @router.message(Command(commands='reset'))
 async def process_reset_command(message: Message, state: FSMContext):
-    prm_date = await db.premium_user(message.from_user.id)
-    if not prm_date:
-        await message.answer(text=LEXICON_TEXT['fail_premium'], reply_markup=keyboard_button)
-    else:
-        await db.db_changes_long(message.from_user.id, 10)
-        await db.db_changes_short(message.from_user.id, -10)
-        await db.db_interval_long(message.from_user.id, 30)
-        await db.db_interval_short(message.from_user.id, 30)
-        await db.db_quantity_interval(message.from_user.id, 30)
-        await db.db_quantity_setting(message.from_user.id, 1)
-        await db.db_changes_long_min(message.from_user.id, 3)
-        await db.db_interval_long_min(message.from_user.id, 3)
-        t = await setting_status(message.from_user.id)
-        await message.answer(text=t, reply_markup=keyboard_button)
+    prem = await not_prem(message)
+    if not prem:
+        return
+    await db.db_changes_long(message.from_user.id, 10)
+    await db.db_changes_short(message.from_user.id, -10)
+    await db.db_interval_long(message.from_user.id, 30)
+    await db.db_interval_short(message.from_user.id, 30)
+    await db.db_quantity_interval(message.from_user.id, 30)
+    await db.db_quantity_setting(message.from_user.id, 1)
+    await db.db_changes_long_min(message.from_user.id, 3)
+    await db.db_interval_long_min(message.from_user.id, 3)
+    t = await setting_status(message.from_user.id)
+    await message.answer(text=t, reply_markup=keyboard_button)
     await state.clear()
     await db.stop_signal(message.from_user.id, 1)
 
@@ -189,11 +207,11 @@ async def process_reset_command(message: Message, state: FSMContext):
 @router.message(Command(commands='profile'))
 @router.message(F.text == LEXICON['/profile'], StateFilter(default_state))
 async def time_premium(message: Message, state: FSMContext):
-    prm_date = await db.premium_user(message.from_user.id)
-    if not prm_date:
-        await message.answer(text=LEXICON_TEXT['fail_premium'], reply_markup=keyboard_button)
+    prem = await not_prem(message)
+    if not prem:
+        return
     else:
-        await message.answer(text=LEXICON_TEXT['premium'].format(prm_date=prm_date), reply_markup=keyboard_button)
+        await message.answer(text=LEXICON_TEXT['premium'].format(prm_date=prem['created_at']), reply_markup=keyboard_button)
     await state.clear()
     await db.stop_signal(message.from_user.id, 1)
 
@@ -201,9 +219,9 @@ async def time_premium(message: Message, state: FSMContext):
 @router.message(Command(commands='setting'))
 @router.message(F.text == LEXICON['/setting'], StateFilter(default_state))  # Этот хэндлер срабатывает на команду /setting
 async def process_settings_command(message: Message, state: FSMContext):
-    prm_date = await db.premium_user(message.from_user.id)
-    if not prm_date:
-        await message.answer(text=LEXICON_TEXT['fail_premium'])
+    prem = await not_prem(message)
+    if not prem:
+        return
     else:
         t = await setting_status(message.from_user.id)
         await message.answer(text=t, reply_markup=keyboard_button_setting)
@@ -375,35 +393,9 @@ async def quantity_warning(message: Message):
     await message.answer(text=LEXICON_TEXT['quantity_warning'])
 
 
-async def message_long(tg_id, lp, symbol, interval, q, qi='За 24 часа'):
-    coinglass = f'https://www.coinglass.com/tv/ru/Bybit_{symbol}'
-    bybit = f'https://www.bybit.com/trade/usdt/{symbol}'
-    binance = f'https://www.binance.com/ru/futures/{symbol}'
-    await bot.send_message(chat_id=tg_id, text=f'🟢<b>{symbol[0:-4]}</b>\n'
-                                               f'<b>⚫ByBit</b>\n'
-                                               f'<b>Изменения за {interval} минут</b>\n'
-                                               f'&#128181;Цена изменилась на: <b>{round(lp, 2)}%</b>\n'
-                                               f'&#129535;Кол-во сигналов сигналов {qi}: <b>{q}</b>\n'
-                                               f'<a href=\"{bybit}\">ByBit</a> | <a href=\"{coinglass}\">CoinGlass</a> | <a href=\"{binance}\">Binance</a>',
-                           parse_mode='HTML', disable_web_page_preview=True)
-
-
-async def message_long_mini_bybit(tg_id, lp, symbol, interval, q, qi='За 24 часа'):
-    coinglass = f'https://www.coinglass.com/tv/ru/Bybit_{symbol}'
-    bybit = f'https://www.bybit.com/trade/usdt/{symbol}'
-    binance = f'https://www.binance.com/ru/futures/{symbol}'
-    await bot.send_message(chat_id=tg_id, text=f'💹<b>{symbol[0:-4]}</b>\n'
-                                               f'<b>⚫ByBit</b>\n'
-                                               f'<b>Изменения за {interval} минут</b>\n'
-                                               f'&#128181;Цена изменилась на: <b>{round(lp, 2)}%</b>\n'
-                                               f'&#129535;Кол-во сигналов сигналов {qi}: <b>{q}</b>\n'
-                                               f'<a href=\"{bybit}\">ByBit</a> | <a href=\"{coinglass}\">CoinGlass</a> | <a href=\"{binance}\">Binance</a>',
-                           parse_mode='HTML', disable_web_page_preview=True)
-
-
 @router.message(F.text == LEXICON['/market'], StateFilter(default_state))
 async def press_market(message: Message):
-    market = await db.db_setting_selection(message.from_user.id)
+    market = await db.setting_select(message.from_user.id)
     binance = market['binance']
     bybit = market['bybit']
     if binance and bybit:
@@ -430,78 +422,63 @@ async def press_market(message: Message):
 @router.message(F.text == LEXICON['/bybit'], StateFilter(default_state))
 @router.message(F.text == LEXICON['/bybit_off'], StateFilter(default_state))
 async def bybit_off(message: Message):
-    market = await db.db_setting_selection(message.from_user.id)
+    market = await db.setting_select(message.from_user.id)
     bybit = market['bybit']
     if bybit:
-        await db.market_setting(message.from_user.id, 'bybit', 0)
+        await db.market_setting(message.from_user.id, 0, 'bybit')
         await press_market(message)
     else:
-        await db.market_setting(message.from_user.id, 'bybit', 1)
+        await db.market_setting(message.from_user.id, 1, 'bybit')
         await press_market(message)
 
 
 @router.message(F.text == LEXICON['/binance'], StateFilter(default_state))
 @router.message(F.text == LEXICON['/binance_off'], StateFilter(default_state))
 async def bybit_off(message: Message):
-    market = await db.db_setting_selection(message.from_user.id)
+    market = await db.setting_select(message.from_user.id)
     binance = market['binance']
     if binance:
-        await db.market_setting(message.from_user.id, 'binance', 0)
+        await db.market_setting(message.from_user.id, 0, 'binance')
         await press_market(message)
     else:
-        await db.market_setting(message.from_user.id, 'binance', 1)
+        await db.market_setting(message.from_user.id, 1, 'binance')
         await press_market(message)
 
 
-async def message_short(tg_id, lp, symbol, interval, q, qi='За 24 часа'):
+async def message_bybit_binance(tg_id, lp, symbol, interval, q, sml, qi='за 24 часа'):
     coinglass = f'https://www.coinglass.com/tv/ru/Bybit_{symbol}'
     bybit = f'https://www.bybit.com/trade/usdt/{symbol}'
     binance = f'https://www.binance.com/ru/futures/{symbol}'
-    await bot.send_message(chat_id=tg_id, text=f'🔴<b>{symbol[0:-4]}</b>\n'
-                                               f'<b>⚫ByBit</b>\n'
-                                               f'Изменения за {interval} минут\n'
+    await bot.send_message(chat_id=tg_id, text=f'{sml}<b>{symbol[0:-4]}</b>\n'
+                                               f'<b>⚫ByBit and 🌕Binance</b>\n'
+                                               f'<b>Изменения за {interval} минут</b>\n'
                                                f'&#128181;Цена изменилась на: <b>{round(lp, 2)}%</b>\n'
-                                               f'&#129535;Кол-во сигналов за {qi}: <b>{q}</b>\n'
+                                               f'&#129535;Кол-во сигналов {qi}: <b>{q}</b>\n'
                                                f'<a href=\"{bybit}\">ByBit</a> | <a href=\"{coinglass}\">CoinGlass</a> | <a href=\"{binance}\">Binance</a>',
                            parse_mode='HTML', disable_web_page_preview=True)
 
 
-async def message_long_binance(tg_id, lp, symbol, interval, q, qi='За 24 часа'):
+async def message_bybit(tg_id, lp, symbol, interval, q, sml, qi='за 24 часа', ):
     coinglass = f'https://www.coinglass.com/tv/ru/Bybit_{symbol}'
-    binance = f'https://www.binance.com/ru/futures/{symbol}'
     bybit = f'https://www.bybit.com/trade/usdt/{symbol}'
-    await bot.send_message(chat_id=tg_id, text=f'🟢<b>{symbol[0:-4]}</b>\n'
-                                               f'<b>🟡Binance</b>\n'
+    await bot.send_message(chat_id=tg_id, text=f'{sml}<b>{symbol[0:-4]}</b>\n'
+                                               f'<b>⚫ByBit</b>\n'
                                                f'<b>Изменения за {interval} минут</b>\n'
                                                f'&#128181;Цена изменилась на: <b>{round(lp, 2)}%</b>\n'
                                                f'&#129535;Кол-во сигналов {qi}: <b>{q}</b>\n'
-                                               f'<a href=\"{binance}\">Binance</a> | <a href=\"{coinglass}\">CoinGlass</a> | <a href=\"{bybit}\">ByBit</a>',
+                                               f'<a href=\"{bybit}\">ByBit</a> | <a href=\"{coinglass}\">CoinGlass</a>',
                            parse_mode='HTML', disable_web_page_preview=True)
 
 
-async def message_long_binance_min(tg_id, lp, symbol, interval, q, qi='За 24 часа'):
-    coinglass = f'https://www.coinglass.com/tv/ru/Bybit_{symbol}'
+async def message_binance(tg_id, lp, symbol, interval, q, sml, qi='за 24 часа', ):
+    coinglass = f'https://www.coinglass.com/tv/ru/binance_{symbol}'
     binance = f'https://www.binance.com/ru/futures/{symbol}'
-    bybit = f'https://www.bybit.com/trade/usdt/{symbol}'
-    await bot.send_message(chat_id=tg_id, text=f'💹<b>{symbol[0:-4]}</b>\n'
-                                               f'<b>🟡Binance</b>\n'
-                                               f'<b>Изменения за {interval} минут</b>\n'
-                                               f'&#128181;Цена изменилась на: <b>{round(lp, 2)}%</b>\n'
-                                               f'&#129535;Кол-во сигналов {qi}: <b>{q}</b>\n'
-                                               f'<a href=\"{binance}\">Binance</a> | <a href=\"{coinglass}\">CoinGlass</a> | <a href=\"{bybit}\">ByBit</a>',
-                           parse_mode='HTML', disable_web_page_preview=True)
-
-
-async def message_short_binance(tg_id, lp, symbol, interval, q, qi='За 24 часа'):
-    coinglass = f'https://www.coinglass.com/tv/ru/Bybit_{symbol}'
-    binance = f'https://www.binance.com/ru/futures/{symbol}'
-    bybit = f'https://www.bybit.com/trade/usdt/{symbol}'
-    await bot.send_message(chat_id=tg_id, text=f'🔴<b>{symbol[0:-4]}</b>\n'
+    await bot.send_message(chat_id=tg_id, text=f'{sml}<b>{symbol[0:-4]}</b>\n'
                                                f'<b>🌕Binance</b>\n'
                                                f'<b>Изменения за {interval} минут</b>\n'
                                                f'&#128181;Цена изменилась на: <b>{round(lp, 2)}%</b>\n'
-                                               f'&#129535;Кол-во сигналов за {qi}: <b>{q}</b>\n'
-                                               f'<a href=\"{binance}\">Binance</a> | <a href=\"{coinglass}\">CoinGlass</a> | <a href=\"{bybit}\">ByBit</a>',
+                                               f'&#129535;Кол-во сигналов {qi}: <b>{q}</b>\n'
+                                               f'<a href=\"{binance}\">Binance</a> | <a href=\"{coinglass}\">CoinGlass</a>',
                            parse_mode='HTML', disable_web_page_preview=True)
 
 
@@ -517,7 +494,7 @@ async def prem_id(message: Message, state: FSMContext):
 async def prem(message: Message, state: FSMContext):
     id_tg = message.text.split(' ')
     await state.clear()
-    await db.premium_setting(id_tg[0], int(id_tg[1]))
+    await db.prem(id_tg[0], int(id_tg[1]))
 
 
 
