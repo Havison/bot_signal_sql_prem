@@ -1,21 +1,18 @@
 import asyncio
 import logging
-import sentry_sdk
+import tracemalloc
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from sqlalchemy import text
-from database.database_create import Base
 from handlers import user
 from config_data.config import Config, load_config
 from keyboards.set_menu import set_main_menu
-from middlewares.session import DbSessionMiddleware
-from middlewares.track_all_users import TrackAllUsersMiddleware
-from services.signal_message import symbol_database, users_signal
-from database.requests import clear_database
+from services.signal_message import market_add_database, users_list
 from cloud_pay.paymant import list_order
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from database.database import db_start
+
+import sentry_sdk
 
 
 sentry_sdk.init(
@@ -31,11 +28,13 @@ sentry_sdk.init(
 
 
 logger = logging.getLogger(__name__)
+dp = Dispatcher()
+tracemalloc.start()
 
 
-async def countinues_taks_clear():
+async def countinues_taks_bybit():
     while True:
-        await clear_database()
+        await market_add_database()
 
 
 async def countinues_taks_pay():
@@ -43,42 +42,32 @@ async def countinues_taks_pay():
         await list_order()
 
 
-async def countitunes_market():
+async def countinues_task_user():
     while True:
-        # pass
-        await symbol_database()
-
-
-async def countitunes_users_signal():
-    while True:
-        await users_signal()
+        await users_list()
 
 
 async def main():
+    # Конфигурируем логирование
     logging.basicConfig(
         level=logging.INFO,
         filename=f'{__name__}.log',
         format='%(filename)s:%(lineno)d #%(levelname)-8s '
                '[%(asctime)s] - %(name)s - %(message)s')
-
+    # Выводим в консоль информацию о начале запуска бота
     logger.info('Starting bot')
 
+    # Загружаем конфиг в переменную config
     config: Config = load_config('.env')
-    dp = Dispatcher()
-    engine = create_async_engine(url=config.database.db_url, echo=False)
 
-    async with engine.begin() as conn:
-        await conn.execute(text("SELECT 1"))
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-
+    task_bybit = asyncio.create_task(countinues_taks_bybit())
     task_paymant = asyncio.create_task(countinues_taks_pay())
-    task_market = asyncio.create_task(countitunes_market())
-    tasl_user_signal = asyncio.create_task(countitunes_users_signal())
-    task_clear = asyncio.create_task(countinues_taks_clear())
+    task_users = asyncio.create_task(countinues_task_user())
 
+    # Инициализируем объект хранилища
+    #storage = ...
+
+    # Инициализируем бот и диспетчер
     bot = Bot(
         token=config.tg_bot.token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
@@ -86,18 +75,26 @@ async def main():
 
 
     await set_main_menu(bot)
-    # await db_start()
-    # await db_start_binance()
+    await db_start()
+
 
     dp.include_router(user.router)
 
-    Sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
-    dp.update.outer_middleware(DbSessionMiddleware(Sessionmaker))
-    dp.message.outer_middleware(TrackAllUsersMiddleware())
 
-    await dp.start_polling(bot, allowed_updates=[])
+
+    # Пропускаем накопившиеся апдейты и запускаем polling
+    await bot.delete_webhook(drop_pending_updates=True)
+    await dp.start_polling(bot, allowed_updates=[], timeout=60)
+
+
 
 
 asyncio.run(main())
+
+
+
+# Регистрируем миддлвари
+#logger.info('Подключаем миддлвари')
+# ...
 
 
