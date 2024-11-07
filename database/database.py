@@ -139,7 +139,10 @@ async def long_interval_user(interval_long):
         result = await db.execute('''SELECT symbol, last_prise FROM 
         price WHERE date_create>? ORDER BY date_create''', (added_date, ))
         result = await result.fetchall()
-        result_symbol = {i[0]: i[1] for i in result}
+        result_symbol = {}
+        for key, value in result:
+            if key not in result_symbol:
+                result_symbol[key] = value
         return result_symbol
 
 

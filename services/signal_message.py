@@ -46,9 +46,9 @@ async def market_price():
             if 'USDT' in data['symbol']:
                 if data['symbol'] not in bybit_symbol:
                     binance_data.append((data['symbol'], data['price']))
-                    binance_symbol.append(data['symbol'])
+                binance_symbol.append(data['symbol'])
         data_list = bybit_data + binance_data
-        result = (data_list, bybit_symbol, binance_data)
+        result = (data_list, bybit_symbol, binance_symbol)
         return result
     except Exception as e:
         logger2.error(e)
@@ -133,4 +133,6 @@ async def user_signal_bybit(idt, data_symbol):
                                                  0, data_symbol[1], data_symbol[2], quantity_signal_pd, interval_signal),
                              default_signal_user(idt, a_long, b_long, symbol,
                                                  '&#x1F4B9;', quantity_interval_min, interval_pump_min,
-                                                 2, data_symbol[1], data_symbol[2], quantity_signal_pm, interval_signal_min))
+                                                 2, data_symbol[1], data_symbol[2], quantity_signal_pm,
+                                                 interval_signal_min)
+                             )
