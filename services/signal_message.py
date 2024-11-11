@@ -59,7 +59,7 @@ async def market_price():
 async def market_add_database():
     data = await market_price()
     await db_bybit(data[0])
-    await asyncio.sleep(7)
+    await asyncio.sleep(4)
 
 
 async def users_list():
